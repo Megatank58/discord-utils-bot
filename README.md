@@ -6,7 +6,6 @@
   <br />
   <p>
     <a href="https://discord.gg/djs"><img src="https://img.shields.io/discord/222078108977594368?color=5865F2&logo=discord&logoColor=white" alt="Discord server" /></a>
-    <a href="https://www.patreon.com/discordjs"><img src="https://img.shields.io/badge/donate-patreon-F96854.svg" alt="Patreon" /></a>
   </p>
 </div>
 
@@ -17,17 +16,18 @@ New tags are added via pull requests. Please provide the tag content as PR descr
 Add new tags in `./tags/tags.toml` in the following format:
 
 ```toml
-[tagname]
-keywords = ["tagname", "alias1", "alias2"]
+[tag-name]
+keywords = ["keyword", "another-keyword"]
 content = """
 Put your tag content here!
 """
 
 ```
 
-- The application uses slash command interactions only, you can use emojis from the discord server (please do not use global emojis from other servers, as we can't control them being deleted at any point)
-- You can use masked link syntax `[discord.js](<https://discord.js.org> 'discord.js website')` (the `< >` wrapping is required to suppress embeds in interaction responses).
-- Keywords need to include the tag name
+- Tag names and keywords have to use `-` instead of spaces
 - Backslashes have to be escaped! `\\`
 - Code blocks work and newlines are respected
-- The repository includes vscode code-snippets for tags, masked links, "learn more" links, a bullet point and arrow character
+- The application uses slash command interactions only, you can use emojis from the Discord server (please do not use global emojis from other servers, as we can't control them being deleted at any point)
+- You can use masked link syntax `[discord.js](https://discord.js.org 'discord.js website')` (links do not need to be escaped because of the message flag set on all responses).
+- The repository includes vscode code-snippets for tags, "learn more" links, and an arrow character..
+- You can test tags through the bot (for example in our [discord server](https://discord.gg/djs)) with `/testtag`.

@@ -2,7 +2,7 @@ import { ApplicationCommandOptionType } from 'discord-api-types/v10';
 
 export const DiscordDocsCommand = {
 	name: 'discorddocs',
-	description: 'Search discord developer documentation',
+	description: 'Search Discord developer documentation',
 	options: [
 		{
 			type: ApplicationCommandOptionType.String,
@@ -15,6 +15,12 @@ export const DiscordDocsCommand = {
 			type: ApplicationCommandOptionType.User,
 			name: 'target',
 			description: 'User to mention',
+			required: false,
+		},
+		{
+			type: ApplicationCommandOptionType.Boolean,
+			name: 'hide',
+			description: 'Hide command output',
 			required: false,
 		},
 	],

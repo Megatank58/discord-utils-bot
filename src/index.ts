@@ -8,6 +8,9 @@ import { webcrypto } from 'node:crypto';
 import { handleApplicationCommand } from './handling/handleApplicationCommand';
 import { handleApplicationCommandAutocomplete } from './handling/handleApplicationCommandAutocomplete';
 import { MDNIndexEntry } from './types/mdn';
+import { loadLatestNpmVersion } from './functions/npm';
+import { CustomSourcesString } from './types/discordjs-docs-parser';
+import { handleModalSubmit } from './handling/handleModalSubmit';
 
 // @ts-expect-error
 const { subtle } = webcrypto;
@@ -23,17 +26,7 @@ function hex2bin(hex: string) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-const PUBKEY = subtle.importKey(
-	'raw',
-	hex2bin(process.env.DISCORD_PUBKEY!),
-	{
-		name: 'NODE-ED25519',
-		namedCurve: 'NODE-ED25519',
-		public: true,
-	},
-	true,
-	['verify'],
-);
+const PUBKEY = subtle.importKey('raw', hex2bin(process.env.DISCORD_PUBKEY!), 'Ed25519', true, ['verify']);
 const PORT = parseInt(process.env.PORT!, 10);
 
 async function verify(req: Request, res: Response, next: NextHandler) {
@@ -52,12 +45,7 @@ async function verify(req: Request, res: Response, next: NextHandler) {
 	const hexSignature = hex2bin(signature);
 
 	// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-	const isValid = await subtle.verify(
-		'NODE-ED25519',
-		await PUBKEY,
-		hexSignature,
-		encoder.encode(timestamp + req.rawBody),
-	);
+	const isValid = await subtle.verify('Ed25519', await PUBKEY, hexSignature, encoder.encode(timestamp + req.rawBody));
 
 	if (!isValid) {
 		res.statusCode = 401;
@@ -66,10 +54,12 @@ async function verify(req: Request, res: Response, next: NextHandler) {
 	void next();
 }
 
-const tagCache: Collection<string, Tag> = new Collection();
+const tagCache = new Collection<string, Tag>();
 const mdnIndexCache: MDNIndexEntry[] = [];
+const customSources = new Map<CustomSourcesString, string>();
 void loadTags(tagCache);
 logger.info(`Tag cache loaded with ${tagCache.size} entries.`);
+void loadLatestNpmVersion(customSources);
 
 Doc.setGlobalOptions({
 	escapeMarkdownLinks: true,
@@ -80,7 +70,7 @@ export async function start() {
 		.then((r) => r.json())
 		.catch(() => undefined)) as MDNIndexEntry[] | undefined;
 	if (mdnData) {
-		mdnIndexCache.push(...mdnData.map((r) => ({ title: r.title, url: `${r.url}` })));
+		mdnIndexCache.push(...mdnData.map((r) => ({ title: r.title, url: r.url })));
 	}
 
 	polka()
@@ -93,10 +83,13 @@ export async function start() {
 						prepareAck(res);
 						break;
 					case InteractionType.ApplicationCommand:
-						await handleApplicationCommand(res, message, tagCache);
+						await handleApplicationCommand(res, message, tagCache, customSources);
 						break;
 					case InteractionType.ApplicationCommandAutocomplete:
-						await handleApplicationCommandAutocomplete(res, message, tagCache, mdnIndexCache);
+						await handleApplicationCommandAutocomplete(res, message, tagCache, mdnIndexCache, customSources);
+						break;
+					case InteractionType.ModalSubmit:
+						await handleModalSubmit(res, message);
 						break;
 					default:
 						logger.warn(`Received interaction of type ${message.type}`);
@@ -112,5 +105,14 @@ export async function start() {
 		.listen(PORT);
 	logger.info(`Listening for interactions on port ${PORT}.`);
 }
+
+process.on('uncaughtException', (err, origin) => {
+	logger.error(`Caught exception: ${err.message}\nException origin: ${origin}`, err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+	// eslint-disable-next-line no-console
+	console.log('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 void start();

@@ -1,4 +1,4 @@
-import { InteractionResponseType } from 'discord-api-types/v10';
+import { InteractionResponseType, MessageFlags } from 'discord-api-types/v10';
 import { Response } from 'polka';
 import { PREFIX_FAIL } from './constants';
 
@@ -19,8 +19,7 @@ export function prepareResponse(
 		JSON.stringify({
 			data: {
 				content,
-				flags: ephemeral ? 64 : 0,
-				// eslint-disable-next-line @typescript-eslint/naming-convention
+				flags: ephemeral ? MessageFlags.Ephemeral | MessageFlags.SuppressEmbeds : MessageFlags.SuppressEmbeds,
 				allowed_mentions: { parse, users },
 				components: [],
 			},

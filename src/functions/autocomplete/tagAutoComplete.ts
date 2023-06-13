@@ -17,11 +17,15 @@ export function tagAutoComplete(
 		const keywordMatches: { name: string; value: string }[] = [];
 		const contentMatches: { name: string; value: string }[] = [];
 		const exactKeywords: { name: string; value: string }[] = [];
-		const lowerQuery = query.toLowerCase();
+		const cleanedQuery = query.toLowerCase().replace(/\s+/g, '-');
+
 		for (const [key, tag] of tagCache.entries()) {
-			const exactKeyword = tag.keywords.find((s) => s.toLowerCase() === lowerQuery);
-			const includesKeyword = tag.keywords.find((s) => s.toLowerCase().includes(lowerQuery));
-			const isContentMatch = tag.content.toLowerCase().includes(lowerQuery);
+			const exactKeyword =
+				Boolean(tag.keywords.find((s) => s.toLowerCase() === cleanedQuery)) || key.toLowerCase() === cleanedQuery;
+			const includesKeyword =
+				Boolean(tag.keywords.find((s) => s.toLowerCase().includes(cleanedQuery))) ||
+				key.toLowerCase().includes(cleanedQuery);
+			const isContentMatch = tag.content.toLowerCase().includes(cleanedQuery);
 			if (exactKeyword) {
 				exactKeywords.push({
 					name: `✅ ${key}`,

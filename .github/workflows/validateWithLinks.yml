@@ -1,5 +1,6 @@
-name: Validate
-on: [push, pull_request]
+name: Validate with link responses
+on: [workflow_dispatch]
+
 jobs:
   validate:
     name: validate
@@ -23,4 +24,4 @@ jobs:
         run: yarn build
 
       - name: Validate Tags
-        run: yarn validate-tags
+        run: yarn validate-tags:withlinks

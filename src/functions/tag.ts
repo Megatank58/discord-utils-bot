@@ -26,12 +26,10 @@ export interface TagSimilarityEntry {
 }
 
 export async function loadTags(tagCache: Collection<string, Tag>, remote = false) {
-	let file: any;
-	if (remote) {
-		file = await fetch(REMOTE_TAG_URL).then((r) => r.text());
-	} else {
-		file = readFileSync(join(__dirname, '..', '..', 'tags', 'tags.toml'), { encoding: 'utf8' });
-	}
+	const file = remote
+		? await fetch(REMOTE_TAG_URL).then((r) => r.text())
+		: readFileSync(join(__dirname, '..', '..', 'tags', 'tags.toml'), { encoding: 'utf8' });
+
 	const data = TOML.parse(file, 1.0, '\n');
 	for (const [key, value] of Object.entries(data)) {
 		tagCache.set(key, value as unknown as Tag);
@@ -39,21 +37,23 @@ export async function loadTags(tagCache: Collection<string, Tag>, remote = false
 }
 
 export function findTag(tagCache: Collection<string, Tag>, query: string, target?: string): string | null {
+	query = query.replace(/\s+/g, '-');
 	const tag = tagCache.get(query) ?? tagCache.find((v) => v.keywords.includes(query));
 	if (!tag) return null;
 	return suggestionString('tag', tag.content, target);
 }
 
-export async function reloadTags(res: Response, tagCache: Collection<string, Tag>, remote = false) {
+export async function reloadTags(res: Response, tagCache: Collection<string, Tag>, remote = true) {
 	const prev = tagCache.size;
 	tagCache.clear();
 	try {
 		await loadTags(tagCache, remote);
 		prepareResponse(
 			res,
-			`${PREFIX_SUCCESS} Tags have fully reloaded ${
-				remote ? '(remote)' : '(local)'
-			}! Tag cache size has changed from ${prev} to ${tagCache.size}.`,
+			[
+				`${PREFIX_SUCCESS} **Tags have fully reloaded ${remote ? '(remote)' : '(local)'}!**`,
+				`Tag cache size has changed from ${prev} to ${tagCache.size}.`,
+			].join('\n'),
 			true,
 		);
 	} catch (error) {
@@ -66,11 +66,17 @@ export async function reloadTags(res: Response, tagCache: Collection<string, Tag
 	return res;
 }
 
-export function showTag(res: Response, query: string, tagCache: Collection<string, Tag>, target?: string): Response {
+export function showTag(
+	res: Response,
+	query: string,
+	tagCache: Collection<string, Tag>,
+	target?: string,
+	ephemeral?: boolean,
+): Response {
 	query = query.trim().toLowerCase();
-	const content = findTag(tagCache, query, target)!;
+	const content = findTag(tagCache, query, target);
 	if (content) {
-		prepareResponse(res, content, false, target ? [target] : []);
+		prepareResponse(res, content, ephemeral ?? false, target ? [target] : []);
 	} else {
 		prepareErrorResponse(res, `Could not find a tag with name or alias similar to \`${query}\`.`);
 	}

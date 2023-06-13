@@ -2,10 +2,18 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import * as TOML from '@ltd/j-toml';
 import { Tag } from '../functions/tag';
-import { red } from 'kleur';
+import { red, green, yellow } from 'kleur';
 import { AUTOCOMPLETE_MAX_ITEMS } from '../util';
+import { request } from 'undici';
 
-type ConflictType = 'uniqueKeywords' | 'headerInKeywords' | 'emptyKeyword' | 'unescapedLink';
+enum ConflictType {
+	UniqueKeywords,
+	NonEmptyKeyword,
+	NonEmptyBody,
+	NoWhiteSpace,
+	NameNotInKeywords,
+	Status404Link,
+}
 
 interface Conflict {
 	firstName: string;
@@ -14,58 +22,133 @@ interface Conflict {
 	type: ConflictType;
 }
 
-function validateTags() {
+interface Warning {
+	name: string;
+	description: string;
+}
+
+function printWarnings(warnings: Warning[], stream: NodeJS.WriteStream) {
+	stream.write('\n\n');
+	stream.write('Tag validation warnings:\n');
+	stream.write(warnings.map((w, i) => yellow(`${i}. ${w.name}: ${w.description}`)).join('\n'));
+	stream.write('\n');
+}
+
+export function parseSingleTag(tag: string) {
+	return TOML.parse(tag, 1.0, '\n');
+}
+
+interface ValidationResult {
+	warnings: Warning[];
+	errors: string[];
+}
+
+export async function validateTags(
+	runResponseValidation: boolean,
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
+	_additionalTagData?: string,
+): Promise<ValidationResult> {
 	const file = readFileSync(join(__dirname, '..', '..', 'tags', 'tags.toml'));
-	const data = TOML.parse(file, 1.0, '\n');
+
+	const mergedData = _additionalTagData ? `${file.toString()}\n\n${_additionalTagData}` : file;
+	const data = TOML.parse(mergedData, 1.0, '\n');
 	const conflicts: Conflict[] = [];
+	const warnings: Warning[] = [];
+
 	let hoisted = 0;
 	for (const [key, value] of Object.entries(data)) {
 		const v = value as unknown as Tag;
 		const codeBlockRegex = /(`{1,3}).+?\1/gs;
-		const detectionRegex = /\[[^\[\]]+?\]\([^<][^\(\)]+?[^>]\)/g;
+		const markDownLinkRegex = /\[[^\[\]]+?\]\(<?(?<link>[^\(\)]+?)>?\)/g;
 		const cleanedContent = v.content.replace(codeBlockRegex, '');
 
-		const conflictLinks = [];
-		let result: RegExpExecArray | null;
-		while ((result = detectionRegex.exec(cleanedContent)) !== null) {
-			conflictLinks.push(result[0]);
-		}
-		if (conflictLinks.length) {
-			conflicts.push({
-				firstName: key,
-				secondName: '',
-				conflictKeyWords: conflictLinks,
-				type: 'unescapedLink',
-			});
+		const invalidLinks: string[] = [];
+
+		if (runResponseValidation) {
+			let result: RegExpExecArray | null;
+			while ((result = markDownLinkRegex.exec(cleanedContent)) !== null) {
+				const groups = result.groups;
+
+				if (groups?.link) {
+					process.stdout.write(`\n[ ] Testing link: ${groups.link}`);
+					const res = await request(groups.link, {
+						maxRedirections: 1,
+						headers: {
+							'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:101.0) Gecko/20100101 Firefox/101.0',
+						},
+					}).catch(() => null);
+					process.stdout.write('\r\x1b[K');
+					if (!res || res.statusCode === 404) {
+						invalidLinks.push(`${groups.link} (${res?.statusCode ?? 'request failed'})`);
+						process.stdout.write(`[${red('✖')}] ${groups.link} (${red(res?.statusCode ?? 'request failed')})`);
+					} else if (res.statusCode === 200) {
+						process.stdout.write(`[${green('✔')}] ${groups.link} (${green(res.statusCode)})`);
+					} else {
+						warnings.push({
+							name: key,
+							description: `Non-200 statuscode response on: ${groups.link} (${res.statusCode})`,
+						});
+						process.stdout.write(`[${yellow('✔')}] ${groups.link} (${yellow(res.statusCode)})`);
+					}
+				}
+			}
+
+			if (invalidLinks.length) {
+				conflicts.push({
+					firstName: key,
+					secondName: '',
+					conflictKeyWords: invalidLinks,
+					type: ConflictType.Status404Link,
+				});
+			}
 		}
 
 		if (v.hoisted) {
 			hoisted++;
 		}
 
+		if (v.keywords.includes(key)) {
+			conflicts.push({
+				firstName: key,
+				secondName: '',
+				conflictKeyWords: [],
+				type: ConflictType.NameNotInKeywords,
+			});
+		}
+
+		if (v.keywords.some((k) => !k.replace(/\s+/g, '').length)) {
+			conflicts.push({
+				firstName: key,
+				secondName: '',
+				conflictKeyWords: [],
+				type: ConflictType.NonEmptyKeyword,
+			});
+		}
+
+		if (!v.content.replace(/[\s\r\n]+/g, '').length) {
+			conflicts.push({
+				firstName: key,
+				secondName: '',
+				conflictKeyWords: [],
+				type: ConflictType.NonEmptyBody,
+			});
+		}
+
+		const whiteSpaceKeywords = v.keywords.filter((k) => /\s/.exec(k));
+		if (whiteSpaceKeywords.length) {
+			conflicts.push({
+				firstName: key,
+				secondName: '',
+				conflictKeyWords: whiteSpaceKeywords,
+				type: ConflictType.NoWhiteSpace,
+			});
+		}
+
 		for (const [otherKey, otherValue] of Object.entries(data)) {
 			const oV = otherValue as unknown as Tag;
-			if (
-				(v.keywords.some((k) => !k.replace(/\s+/g, '').length) || !v.content.replace(/\s+/g, '').length) &&
-				!conflicts.some((c) => c.type === 'emptyKeyword' && c.firstName === key)
-			) {
-				conflicts.push({
-					firstName: key,
-					secondName: '',
-					conflictKeyWords: [],
-					type: 'emptyKeyword',
-				});
-			}
 			if (key !== otherKey) {
-				if (!v.keywords.includes(key) && !conflicts.some((c) => c.type === 'headerInKeywords' && c.firstName === key)) {
-					conflicts.push({
-						firstName: key,
-						secondName: '',
-						conflictKeyWords: [],
-						type: 'headerInKeywords',
-					});
-				}
-				const conflictKeyWords = v.keywords.filter((k) => oV.keywords.includes(k));
+				const conflictKeyWords = v.keywords.filter((k) => oV.keywords.includes(k) || otherKey === k);
+
 				if (
 					conflictKeyWords.length &&
 					!conflicts.some((c) => [c.firstName, c.secondName].every((e) => [key, otherKey].includes(e)))
@@ -74,7 +157,7 @@ function validateTags() {
 						firstName: key,
 						secondName: otherKey,
 						conflictKeyWords,
-						type: 'uniqueKeywords',
+						type: ConflictType.UniqueKeywords,
 					});
 				}
 			}
@@ -82,58 +165,92 @@ function validateTags() {
 	}
 
 	if (conflicts.length || hoisted > AUTOCOMPLETE_MAX_ITEMS) {
-		const parts = [];
-		const { uniqueConflicts, headerConflicts, emptyConflicts, linkConflicts } = conflicts.reduce(
+		const parts: string[] = [];
+		const {
+			uniqueConflicts,
+			emptyKeywordConflicts,
+			emptyBodyConflicts,
+			noWhiteSpaceConflicts,
+			status404LinkConflicts,
+			nameNotInKeywordsConflicts,
+		} = conflicts.reduce(
 			(a, c) => {
 				switch (c.type) {
-					case 'uniqueKeywords':
+					case ConflictType.NameNotInKeywords:
+						a.nameNotInKeywordsConflicts.push(c);
+						break;
+					case ConflictType.UniqueKeywords:
 						a.uniqueConflicts.push(c);
 						break;
-					case 'headerInKeywords':
-						a.headerConflicts.push(c);
+					case ConflictType.NonEmptyKeyword:
+						a.emptyKeywordConflicts.push(c);
 						break;
-					case 'emptyKeyword':
-						a.emptyConflicts.push(c);
+					case ConflictType.NonEmptyBody:
+						a.emptyBodyConflicts.push(c);
 						break;
-					case 'unescapedLink':
-						a.linkConflicts.push(c);
+					case ConflictType.NoWhiteSpace:
+						a.noWhiteSpaceConflicts.push(c);
+						break;
+					case ConflictType.Status404Link:
+						a.status404LinkConflicts.push(c);
 				}
 				return a;
 			},
 			{
+				nameNotInKeywordsConflicts: [] as Conflict[],
 				uniqueConflicts: [] as Conflict[],
-				headerConflicts: [] as Conflict[],
-				emptyConflicts: [] as Conflict[],
-				linkConflicts: [] as Conflict[],
+				emptyKeywordConflicts: [] as Conflict[],
+				emptyBodyConflicts: [] as Conflict[],
+				noWhiteSpaceConflicts: [] as Conflict[],
+				status404LinkConflicts: [] as Conflict[],
 			},
 		);
 
+		if (nameNotInKeywordsConflicts.length) {
+			parts.push(
+				`Tag validation error: Tag name should not be included in keywords:\n${nameNotInKeywordsConflicts
+					.map((c, i) => red(`${i}. [${c.firstName}]`))
+					.join('\n')}`,
+			);
+		}
+
 		if (uniqueConflicts.length) {
 			parts.push(
-				`Tag validation error: Keywords have to be unique:\n${uniqueConflicts
-					.map((c, i) => red(`${i}. [${c.firstName}] <> [${c.secondName}]: keywords: ${c.conflictKeyWords.join(', ')}`))
+				`Tag validation error: Tag names and keywords have to be unique:\n${uniqueConflicts
+					.map((c, i) =>
+						red(`${i}. [${c.firstName}] <> [${c.secondName}]: conflicts: ${c.conflictKeyWords.join(', ')}`),
+					)
 					.join('\n')}`,
 			);
 		}
-		if (headerConflicts.length) {
+
+		if (emptyBodyConflicts.length) {
 			parts.push(
-				`Tag validation error: Tag header must be part of keywords:\n${headerConflicts
+				`Tag validation error: Tag body cannot be empty:\n${emptyBodyConflicts
 					.map((c, i) => red(`${i}. [${c.firstName}]`))
 					.join('\n')}`,
 			);
 		}
 
-		if (emptyConflicts.length) {
+		if (emptyKeywordConflicts.length) {
 			parts.push(
-				`Tag validation error: Tag keywords and body cannot be empty:\n${emptyConflicts
+				`Tag validation error: Tag keywords cannot be empty:\n${emptyKeywordConflicts
 					.map((c, i) => red(`${i}. [${c.firstName}]`))
 					.join('\n')}`,
 			);
 		}
 
-		if (linkConflicts.length) {
+		if (noWhiteSpaceConflicts.length) {
 			parts.push(
-				`Tag validation error: Masked links need to be escaped as [label](<link>):\n${linkConflicts
+				`Tag validation error: Tag names and keywords cannot include whitespace (use - instead):\n${noWhiteSpaceConflicts
+					.map((c, i) => red(`${i}. tag: ${c.firstName}: ${c.conflictKeyWords.join(', ')}`))
+					.join('\n')}`,
+			);
+		}
+
+		if (status404LinkConflicts.length) {
+			parts.push(
+				`Tag validation error: Links returned a 404 status code:\n${status404LinkConflicts
 					.map((c, i) => red(`${i}. tag: ${c.firstName}: ${c.conflictKeyWords.join(', ')}`))
 					.join('\n')}`,
 			);
@@ -143,11 +260,37 @@ function validateTags() {
 			parts.push(`Amount of hoisted tags exceeds ${AUTOCOMPLETE_MAX_ITEMS} (is ${hoisted})`);
 		}
 
-		// eslint-disable-next-line no-console
-		console.error(parts.join('\n\n'));
+		if (warnings.length) {
+			printWarnings(warnings, process.stderr);
+		}
+
+		return {
+			warnings: [],
+			errors: parts,
+		};
+	}
+	return {
+		warnings,
+		errors: [],
+	};
+}
+
+export function processResults(result: ValidationResult) {
+	if (result.warnings.length) {
+		printWarnings(result.warnings, process.stderr);
+	}
+	if (result.errors.length) {
+		process.stderr.write('\n');
+		process.stderr.write(result.errors.join('\n\n'));
+		process.stderr.write('\n');
+		process.stderr.write(red('\n\nTag validation failed\n\n'));
 		process.exit(1);
 	}
+	process.stdout.write(green(`\n\nTag validation passed with ${result.warnings.length} warnings 🎉\n\n`));
 	process.exit(0);
 }
 
-validateTags();
+export async function validateTagsScript(runResponseValidation: boolean) {
+	const result = await validateTags(runResponseValidation);
+	processResults(result);
+}

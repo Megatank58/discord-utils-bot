@@ -17,16 +17,16 @@ export const NodeCommand = {
 			required: false,
 			choices: [
 				{
-					name: 'v12',
-					value: 'latest-v12.x',
-				},
-				{
-					name: 'v14',
-					value: 'latest-v14.x',
-				},
-				{
-					name: 'v16 (default)',
+					name: 'v16',
 					value: 'latest-v16.x',
+				},
+				{
+					name: 'v18 (default)',
+					value: 'latest-v18.x',
+				},
+				{
+					name: 'v20 (current)',
+					value: 'latest-v20.x',
 				},
 			],
 		},
@@ -34,6 +34,12 @@ export const NodeCommand = {
 			type: ApplicationCommandOptionType.User,
 			name: 'target',
 			description: 'User to mention',
+			required: false,
+		},
+		{
+			type: ApplicationCommandOptionType.Boolean,
+			name: 'hide',
+			description: 'Hide command output',
 			required: false,
 		},
 	],
